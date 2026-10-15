@@ -1,0 +1,65 @@
+name: Publish verified release
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing draft tag to verify and publish
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: publish
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Download draft assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          python3 - <<'PY'
+          import json, os, re, subprocess
+          tag = os.environ['RELEASE_TAG']
+          if not re.fullmatch(r'(preview|stable)-[0-9]{20}-linux-amd64', tag):
+              raise SystemExit('Invalid release tag')
+          release = json.loads(subprocess.check_output(['gh', 'api', 'repos/' + os.environ['GH_REPO'] + '/releases/tags/' + tag]))
+          if not release['draft']:
+              raise SystemExit('Only a draft can be published')
+          expected = {'product.json','product.sig','product.tar.gz','seisaku-linux-amd64.run','publisher.pub'}
+          if {a['name'] for a in release['assets']} != expected or any(a['state'] != 'uploaded' for a in release['assets']):
+              raise SystemExit('Draft assets are incomplete or unexpected')
+          subprocess.run(['gh','release','download',tag,'--dir','candidate'],check=True)
+          PY
+      - name: Verify pinned publisher and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          python3 - <<'PY'
+          import json, os, re, subprocess
+          from pathlib import Path
+          from verify_release import verify, release_tag
+          manifest = verify(Path('candidate'), Path('publisher.pub'))
+          tag = os.environ['RELEASE_TAG']
+          if release_tag(manifest) != tag:
+              raise SystemExit('Tag differs from signed release identity')
+          pages = json.loads(subprocess.check_output(['gh','api','repos/'+os.environ['GH_REPO']+'/releases?per_page=100','--paginate','--slurp']))
+          for page in pages:
+              for release in page:
+                  match = re.fullmatch(manifest['channel'] + r'-([0-9]{20})-linux-amd64',release['tag_name'])
+                  if not release['draft'] and match and int(match[1]) >= manifest['sequence']:
+                      raise SystemExit('Sequence already published or superseded')
+          preview = manifest['channel'] == 'preview'
+          subprocess.run(['gh','release','edit',tag,'--draft=false','--prerelease='+str(preview).lower(),'--latest='+str(not preview).lower()],check=True)
+          PY
