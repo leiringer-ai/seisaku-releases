@@ -9,6 +9,7 @@ import re
 import struct
 import subprocess
 import tempfile
+import time
 
 ASSETS = ("product.json", "product.sig", "product.tar.gz", "seisaku-linux-amd64.run", "publisher.pub")
 
@@ -119,8 +120,14 @@ def upload(directory, repository, manifest):
             if manifest["channel"] == "preview":
                 args.append("--prerelease")
             gh(*args)
-        pages = json.loads(gh("api", f"repos/{repository}/releases?per_page=100", "--paginate", "--slurp"))
-        existing = next(release for page in pages for release in page if release["tag_name"] == tag)
+        for attempt in range(6):
+            pages = json.loads(gh("api", f"repos/{repository}/releases?per_page=100", "--paginate", "--slurp"))
+            existing = next((release for page in pages for release in page if release["tag_name"] == tag), None)
+            if existing is not None:
+                break
+            time.sleep(min(2 ** attempt, 8))
+        if existing is None:
+            raise ValueError("GitHub has not exposed the new draft yet; retry to resume the upload")
     if not existing["draft"]:
         raise ValueError("published releases cannot be replaced")
     assets = {asset["name"]: asset for asset in existing["assets"]}
