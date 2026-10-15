@@ -32,7 +32,8 @@ jobs:
           tag = os.environ['RELEASE_TAG']
           if not re.fullmatch(r'(preview|stable)-[0-9]{20}-linux-amd64', tag):
               raise SystemExit('Invalid release tag')
-          release = json.loads(subprocess.check_output(['gh', 'api', 'repos/' + os.environ['GH_REPO'] + '/releases/tags/' + tag]))
+          pages = json.loads(subprocess.check_output(['gh','api','repos/'+os.environ['GH_REPO']+'/releases?per_page=100','--paginate','--slurp']))
+          release = next(release for page in pages for release in page if release['tag_name'] == tag)
           if not release['draft']:
               raise SystemExit('Only a draft can be published')
           expected = {'product.json','product.sig','product.tar.gz','seisaku-linux-amd64.run','publisher.pub'}
