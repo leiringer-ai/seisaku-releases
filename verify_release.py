@@ -54,6 +54,10 @@ def verify(directory, public_key):
             or not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}", manifest["version"])
             or datetime.fromisoformat(manifest["expires"].replace("Z", "+00:00")) <= datetime.now(timezone.utc)):
         raise ValueError("invalid or expired release identity")
+    for name in manifest["files"]:
+        if (name.startswith(("backend/docs/", "backend/acceptance/", "backend/deployment/test_", "backend/deployment/docker/"))
+                or "/.git/" in name or name.endswith((".seed", ".js.map", ".ts.map"))):
+            raise ValueError("development-only or secret file in public product: " + name)
     archive = directory / "product.tar.gz"
     if archive.stat().st_size != manifest["archiveSize"] or digest(archive) != manifest["archiveSha256"]:
         raise ValueError("archive differs from signed inventory")
